@@ -1,0 +1,197 @@
+#!/bin/bash
+
+#
+# ============================================================
+#  GS - Linux Services Applications
+#  Tema: Deploy Automatizado de Servidor WEB (Apache)
+#  Autor: Pedro Annunciato Mota
+#
+#  Objetivos:
+#    - Automatizar instalação e configuração completa do Apache
+#    - Criar backup do site atual
+#    - Aplicar template HTML
+#    - Configurar IP fixo
+#    - Ocultar versão do Apache
+#    - Reiniciar o sistema ao final
+# ============================================================
+
+##### ===================== CONFIGURAÇÕES GERAIS ===================== #####
+
+WEB_ROOT="/var/www/html"
+BACKUP_DIR="/var/backups/site_$(date +%F_%H%M%S)"
+DEFAULT_TEMPLATE_URL="https://raw.githubusercontent.com/bedimcode/responsive-portfolio-website-anita/master/index.html"
+
+VERDE="\e[32m"
+AMARELO="\e[33m"
+VERMELHO="\e[31m"
+AZUL="\e[34m"
+RESET="\e[0m"
+
+##### ===================== FUNÇÕES AUXILIARES ===================== #####
+
+msg() { echo -e "\n${AZUL}[INFO]${RESET} $1\n"; }
+msg_ok() { echo -e "${VERDE}[OK]${RESET} $1"; }
+msg_erro() { echo -e "${VERMELHO}[ERRO]${RESET} $1"; }
+
+##### ===================== INÍCIO ===================== #####
+
+clear
+echo -e "${AZUL}=======================================================${RESET}"
+echo -e "${AZUL}    GS Linux - Deploy Automático de Servidor WEB       ${RESET}"
+echo -e "${AZUL}=======================================================${RESET}"
+
+echo "Este script irá:"
+echo "- Atualizar pacotes"
+echo "- Instalar Apache e curl"
+echo "- Definir IP fixo"
+echo "- Ocultar versão do Apache"
+echo "- Copiar template HTML"
+echo "- Reiniciar automaticamente ao final"
+echo
+
+read -p "Deseja continuar? (s/N): " CONFIRMAR
+case "$CONFIRMAR" in
+    s|S|sim|SIM) ;;
+    *) echo -e "${AMARELO}Cancelado.${RESET}"; exit 1 ;;
+esac
+
+##### ===================== ETAPA 0 - CORREÇÃO DOS REPOSITÓRIOS ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 0 - Correção dos repositórios ==========${RESET}"
+
+SRC="/etc/apt/sources.list"
+
+if grep -q "^deb cdrom:" $SRC; then
+    msg "Removendo repositório CD-ROM..."
+    sed -i '/^deb cdrom:/d' $SRC
+fi
+
+msg "Reescrevendo repositórios oficiais do Debian 12 (Bookworm)..."
+cat <<EOF > $SRC
+deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
+EOF
+
+apt-get update -y
+if [ $? -ne 0 ]; then
+    msg_erro "Falha ao atualizar repositórios mesmo após correção."
+    exit 1
+else
+    msg_ok "Repositórios corrigidos com sucesso!"
+fi
+
+##### ===================== ETAPA 0.5 - IP FIXO ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 0.5 - Configurando IP estático ==========${RESET}"
+
+INTERFACE=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -n1)
+IP_ATUAL=$(ip -4 addr show "$INTERFACE" | grep inet | awk '{print $2}' | cut -d/ -f1)
+GATEWAY=$(ip route | grep default | awk '{print $3}')
+
+msg "Interface detectada: $INTERFACE"
+msg "IP atual detectado: $IP_ATUAL"
+msg "Gateway detectado: $GATEWAY"
+
+msg "Aplicando IP fixo..."
+
+cat <<EOF > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+
+auto $INTERFACE
+iface $INTERFACE inet static
+    address $IP_ATUAL
+    netmask 255.255.255.0
+    gateway $GATEWAY
+    dns-nameservers 8.8.8.8 1.1.1.1
+EOF
+
+msg_ok "IP estático configurado com sucesso!"
+
+##### ===================== ETAPA 1 - INSTALAÇÃO DE PACOTES ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 1 - Instalando pacotes ==========${RESET}"
+
+apt-get update -y
+apt-get install -y apache2 curl
+
+if [ $? -ne 0 ]; then
+    msg_erro "Falha ao instalar apache2 ou curl."
+    exit 1
+else
+    msg_ok "Apache2 e curl instalados."
+fi
+
+##### ===================== ETAPA 2 - CONFIGURAÇÃO DO APACHE ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 2 - Configurando Apache ==========${RESET}"
+
+msg "Habilitando Apache na inicialização..."
+systemctl enable apache2
+
+msg "Iniciando serviço..."
+systemctl restart apache2
+
+if ! systemctl is-active --quiet apache2; then
+    msg_erro "Apache não iniciou."
+    exit 1
+fi
+
+msg_ok "Apache está em execução!"
+
+msg "Aplicando diretivas de segurança..."
+echo "ServerTokens Prod" >> /etc/apache2/apache2.conf
+echo "ServerSignature Off" >> /etc/apache2/apache2.conf
+msg_ok "Versão do Apache oculta!"
+
+##### ===================== ETAPA 3 - BACKUP DO SITE ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 3 - Backup ==========${RESET}"
+
+mkdir -p "$BACKUP_DIR"
+cp -a "$WEB_ROOT"/* "$BACKUP_DIR"/ 2>/dev/null || true
+rm -rf "$WEB_ROOT"/*
+msg_ok "Backup concluído e diretório limpo."
+
+##### ===================== ETAPA 4 - APLICAR TEMPLATE HTML ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 4 - Template HTML ==========${RESET}"
+
+TEMPLATE_URL="$DEFAULT_TEMPLATE_URL"
+msg "Baixando template de: $TEMPLATE_URL"
+
+curl -fsSL "$TEMPLATE_URL" -o "$WEB_ROOT/index.html"
+
+if [ $? -ne 0 ]; then
+    msg_erro "Falha ao baixar template. Criando template local."
+    cat <<EOF > "$WEB_ROOT/index.html"
+<html><body><h1>Servidor Apache - GS Linux</h1></body></html>
+EOF
+fi
+
+msg_ok "Template aplicado!"
+
+##### ===================== ETAPA 5 - PERMISSÕES ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 5 - Permissões ==========${RESET}"
+
+chown -R www-data:www-data "$WEB_ROOT"
+chmod -R 755 "$WEB_ROOT"
+
+msg_ok "Permissões ajustadas!"
+
+##### ===================== ETAPA 6 - EXTRAS DA PROVA ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 6 - Extras ==========${RESET}"
+msg "Espaço reservado para configurações extras do enunciado da GS."
+
+##### ===================== ETAPA FINAL - REBOOT ===================== #####
+
+echo -e "\n${AZUL}========== FINAL ==========${RESET}"
+
+msg "Servidor será reiniciado em 5 segundos..."
+sleep 5
+reboot
+
+exit 0
