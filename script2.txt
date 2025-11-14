@@ -1,0 +1,222 @@
+#!/bin/bash
+#
+# ============================================================
+#  GS - Linux Services Applications
+#  Tema: Deploy Automatizado de Servidor WEB (Apache)
+#  Autor: Pedro (script preparado para a GS)
+#
+#  Objetivo:
+#    - Interagir com o usuário (confirmação e perguntas)
+#    - Instalar e configurar o Apache automaticamente
+#    - Baixar um template HTML da Internet
+#    - Deixar área reservada para configurações extras solicitadas na prova
+# ============================================================
+
+##### ===================== CONFIGURAÇÕES GERAIS ===================== #####
+
+WEB_ROOT="/var/www/html"
+BACKUP_DIR="/var/backups/site_$(date +%F_%H%M%S)"
+DEFAULT_TEMPLATE_URL="https://raw.githubusercontent.com/bedimcode/responsive-portfolio-website-anita/master/index.html"
+
+# Cores
+VERDE="\e[32m"
+AMARELO="\e[33m"
+VERMELHO="\e[31m"
+AZUL="\e[34m"
+RESET="\e[0m"
+
+##### ===================== FUNÇÕES AUXILIARES ===================== #####
+
+msg() { echo -e "\n${AZUL}[INFO]${RESET} $1\n"; }
+msg_ok() { echo -e "${VERDE}[OK]${RESET} $1"; }
+msg_erro() { echo -e "${VERMELHO}[ERRO]${RESET} $1"; }
+pausa() { read -p "Pressione [Enter] para continuar..." dummy; }
+
+##### ===================== CABEÇALHO / INÍCIO ===================== #####
+
+clear
+echo -e "${AZUL}=======================================================${RESET}"
+echo -e "${AZUL}   GS Linux - Deploy Automático de Servidor WEB (Apache)${RESET}"
+echo -e "${AZUL}=======================================================${RESET}\n"
+
+echo "Este script irá:"
+echo "  - Atualizar a lista de pacotes"
+echo "  - Instalar Apache2 e curl"
+echo "  - Fazer backup do conteúdo atual do site"
+echo "  - Baixar um template HTML"
+echo "  - Publicar como página inicial"
+echo
+read -p "Deseja continuar? (s/N): " CONFIRMAR
+
+case "$CONFIRMAR" in
+    s|S|sim|SIM) echo -e "${VERDE}Prosseguindo...${RESET}" ;;
+    *) echo -e "${AMARELO}Operação cancelada.${RESET}"; exit 1 ;;
+esac
+
+##### ===================== ETAPA 0 - CORREÇÃO DOS REPOSITÓRIOS ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 0 - Correção automática dos repositórios ==========${RESET}"
+
+SRC="/etc/apt/sources.list"
+
+# Remover CD-ROM
+if grep -q "^deb cdrom:" $SRC; then
+    msg "Removendo repositório CD-ROM..."
+    sed -i '/^deb cdrom:/d' $SRC
+fi
+
+# Reescrever repositórios para Debian Bookworm
+msg "Aplicando repositórios oficiais (Bookworm)..."
+cat <<EOF > $SRC
+deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
+EOF
+
+msg "Atualizando lista de pacotes após correção..."
+apt-get update -y
+if [ $? -ne 0 ]; then
+    msg_erro "Falha ao atualizar pacotes mesmo após correção. Verifique a conexão."
+    exit 1
+else
+    msg_ok "Repositórios corrigidos e funcionando."
+fi
+
+##### ===================== ETAPA 1 - ATUALIZAÇÃO E PACOTES ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 1 - Atualização e instalação de pacotes ==========${RESET}"
+
+msg "Atualizando lista de pacotes..."
+apt-get update -y
+if [ $? -ne 0 ]; then
+    msg_erro "Erro ao atualizar pacotes."
+    exit 1
+else
+    msg_ok "Atualização concluída."
+fi
+
+msg "Instalando Apache2 e curl..."
+apt-get install -y apache2 curl
+if [ $? -ne 0 ]; then
+    msg_erro "Falha ao instalar apache2 e/ou curl."
+    exit 1
+else
+    msg_ok "Pacotes instalados com sucesso."
+fi
+
+##### ===================== ETAPA 2 - SERVIÇO APACHE ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 2 - Habilitar e iniciar Apache ==========${RESET}"
+
+msg "Habilitando serviço..."
+systemctl enable apache2
+
+msg "Reiniciando Apache..."
+systemctl restart apache2
+
+systemctl is-active --quiet apache2
+if [ $? -ne 0 ]; then
+    msg_erro "Apache não está em execução!"
+    exit 1
+else
+    msg_ok "Apache está ativo."
+fi
+
+##### ===================== ETAPA 3 - BACKUP E LIMPEZA ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 3 - Backup e preparação ==========${RESET}"
+
+if [ -d "$WEB_ROOT" ]; then
+    msg "Fazendo backup para $BACKUP_DIR..."
+    mkdir -p "$BACKUP_DIR"
+    cp -a "$WEB_ROOT"/* "$BACKUP_DIR"/ 2>/dev/null || true
+    msg_ok "Backup concluído."
+else
+    msg "Criando $WEB_ROOT..."
+    mkdir -p "$WEB_ROOT"
+fi
+
+msg "Limpando diretório WEB..."
+rm -rf "$WEB_ROOT"/*
+mkdir -p "$WEB_ROOT"
+msg_ok "Diretório limpo."
+
+##### ===================== ETAPA 4 - TEMPLATE HTML ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 4 - Template HTML ==========${RESET}"
+
+echo "Escolha:"
+echo " 1) Informar URL"
+echo " 2) Usar template padrão"
+read -p "Opção (padrão: 2): " OP
+OP=${OP:-2}
+
+case "$OP" in
+    1) read -p "Informe a URL: " TEMPLATE_URL ;;
+    2|*) TEMPLATE_URL="$DEFAULT_TEMPLATE_URL"; echo "Usando padrão: $TEMPLATE_URL" ;;
+esac
+
+if [ -z "$TEMPLATE_URL" ]; then
+    msg_erro "Nenhuma URL informada."
+    exit 1
+fi
+
+# Ajuste automático /blob/
+if echo "$TEMPLATE_URL" | grep -q "github.com" && echo "$TEMPLATE_URL" | grep -q "/blob/"; then
+    msg "Convertendo URL GitHub para RAW..."
+    TEMPLATE_URL=$(echo "$TEMPLATE_URL" | sed -E 's#https://github.com/([^/]+)/([^/]+)/blob/(.*)#https://raw.githubusercontent.com/\1/\2/\3#')
+fi
+
+msg "Baixando template..."
+curl -fsSL "$TEMPLATE_URL" -o "$WEB_ROOT/index.html"
+
+if [ $? -ne 0 ]; then
+    msg_erro "Falha ao baixar template. Criando página padrão..."
+    cat > "$WEB_ROOT/index.html" <<EOF
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Servidor Web - GS Linux</title>
+</head>
+<body>
+<h1>Servidor Apache - GS Linux</h1>
+<p>Página criada automaticamente.</p>
+<p>Autor: Pedro</p>
+</body>
+</html>
+EOF
+    msg_ok "Template padrão criado."
+else
+    msg_ok "Template baixado com sucesso!"
+fi
+
+##### ===================== ETAPA 5 - PERMISSÕES ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 5 - Permissões ==========${RESET}"
+
+msg "Ajustando permissões..."
+chown -R www-data:www-data "$WEB_ROOT"
+chmod -R 755 "$WEB_ROOT"
+msg_ok "Permissões ajustadas."
+
+##### ===================== ETAPA 6 - EXTRAS DA PROVA ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 6 - Configurações Extras ==========${RESET}"
+msg "Implemente aqui as configurações extras da prova."
+
+##### ===================== ETAPA 7 - FINALIZAÇÃO ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 7 - Finalizando ==========${RESET}"
+
+systemctl restart apache2
+systemctl is-active --quiet apache2
+
+if [ $? -ne 0 ]; then
+    msg_erro "Apache não está ativo após reiniciar!"
+    exit 1
+fi
+
+msg_ok "Servidor WEB configurado com sucesso!"
+echo -e "${VERDE}Acesse: http://SEU_IP/${RESET}"
+exit 0
