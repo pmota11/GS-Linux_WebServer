@@ -1,0 +1,467 @@
+#!/bin/bash
+
+#
+
+# ============================================================
+
+#  GS - Linux Services Applications
+
+#  Tema: Deploy Automatizado de Servidor WEB (Apache)
+
+#  Autor: Pedro (script preparado para a GS)
+
+#
+
+#  Objetivo:
+
+#    - Interagir com o usuário (confirmação e perguntas)
+
+#    - Instalar e configurar o Apache automaticamente
+
+#    - Baixar um template HTML da Internet e publicar como página padrão
+
+#    - Deixar área reservada para configurações extras solicitadas na prova
+
+# ============================================================
+ 
+##### ===================== CONFIGURAÇÕES GERAIS ===================== #####
+ 
+WEB_ROOT="/var/www/html"                             # Diretório padrão do site
+
+BACKUP_DIR="/var/backups/site_$(date +%F_%H%M%S)"    # Pasta de backup com data/hora
+
+DEFAULT_TEMPLATE_URL="https://raw.githubusercontent.com/bedimcode/responsive-portfolio-website-anita/master/index.html"
+ 
+# Cores simples para deixar o output mais legível (opcional)
+
+VERDE="\e[32m"
+
+AMARELO="\e[33m"
+
+VERMELHO="\e[31m"
+
+AZUL="\e[34m"
+
+RESET="\e[0m"
+ 
+##### ===================== FUNÇÕES AUXILIARES ===================== #####
+ 
+msg() {
+
+    # Mensagem padrão informativa
+
+    echo -e "\n${AZUL}[INFO]${RESET} $1\n"
+
+}
+ 
+msg_ok() {
+
+    echo -e "${VERDE}[OK]${RESET} $1"
+
+}
+ 
+msg_erro() {
+
+    echo -e "${VERMELHO}[ERRO]${RESET} $1"
+
+}
+ 
+pausa() {
+
+    read -p "Pressione [Enter] para continuar..." dummy
+
+}
+ 
+##### ===================== CABEÇALHO / INÍCIO ===================== #####
+ 
+clear
+
+echo -e "${AZUL}=======================================================${RESET}"
+
+echo -e "${AZUL}   GS Linux - Deploy Automático de Servidor WEB (Apache)${RESET}"
+
+echo -e "${AZUL}=======================================================${RESET}\n"
+ 
+echo "Este script irá:"
+
+echo "  - Atualizar a lista de pacotes"
+
+echo "  - Instalar Apache2 e curl"
+
+echo "  - Fazer backup do conteúdo atual do site (se existir)"
+
+echo "  - Baixar um template HTML da Internet"
+
+echo "  - Publicar o template como página padrão do servidor WEB"
+
+echo
+ 
+read -p "Deseja continuar? (s/N): " CONFIRMAR
+ 
+case "$CONFIRMAR" in
+
+    s|S|sim|SIM)
+
+        echo -e "${VERDE}Prosseguindo com a execução do script...${RESET}"
+
+        ;;
+
+    *)
+
+        echo -e "${AMARELO}Operação cancelada pelo usuário.${RESET}"
+
+        exit 1
+
+        ;;
+
+esac
+ 
+##### ===================== ETAPA 1 - ATUALIZAÇÃO E PACOTES ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 1 - Atualização e instalação de pacotes ==========${RESET}"
+ 
+msg "Atualizando a lista de pacotes (apt-get update)..."
+
+apt-get update -y
+
+if [ $? -ne 0 ]; then
+
+    msg_erro "Falha ao atualizar a lista de pacotes. Verifique o repositório e a conexão."
+
+    exit 1
+
+else
+
+    msg_ok "Atualização de pacotes concluída."
+
+fi
+ 
+msg "Instalando Apache2 e curl (caso não estejam instalados)..."
+
+apt-get install -y apache2 curl
+
+if [ $? -ne 0 ]; then
+
+    msg_erro "Falha ao instalar apache2 e/ou curl."
+
+    exit 1
+
+else
+
+    msg_ok "Pacotes apache2 e curl instalados com sucesso."
+
+fi
+ 
+##### ===================== ETAPA 2 - SERVIÇO APACHE ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 2 - Habilitar e iniciar o serviço Apache ==========${RESET}"
+ 
+msg "Habilitando o serviço apache2 na inicialização do sistema..."
+
+systemctl enable apache2
+ 
+msg "Iniciando (ou reiniciando) o serviço apache2..."
+
+systemctl restart apache2
+ 
+systemctl is-active --quiet apache2
+
+if [ $? -ne 0 ]; then
+
+    msg_erro "O serviço apache2 NÃO está em execução. Verifique o status com: systemctl status apache2"
+
+    exit 1
+
+else
+
+    msg_ok "Serviço apache2 em execução."
+
+fi
+ 
+##### ===================== ETAPA 3 - BACKUP E LIMPEZA DO SITE ATUAL ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 3 - Backup e preparação do diretório WEB ==========${RESET}"
+ 
+if [ -d "$WEB_ROOT" ]; then
+
+    msg "Fazendo backup do conteúdo atual de $WEB_ROOT para $BACKUP_DIR ..."
+
+    mkdir -p "$BACKUP_DIR"
+
+    cp -a "$WEB_ROOT"/* "$BACKUP_DIR"/ 2>/dev/null || true
+
+    msg_ok "Backup concluído (se havia arquivos)."
+
+else
+
+    msg "Diretório $WEB_ROOT não existia. Criando..."
+
+    mkdir -p "$WEB_ROOT"
+
+fi
+ 
+msg "Limpando o conteúdo antigo do diretório WEB ($WEB_ROOT)..."
+
+rm -rf "$WEB_ROOT"/*
+
+mkdir -p "$WEB_ROOT"
+
+msg_ok "Diretório WEB preparado."
+ 
+##### ===================== ETAPA 4 - TEMPLATE HTML DA INTERNET ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 4 - Download e publicação do template HTML ==========${RESET}"
+ 
+echo "Escolha uma opção para o template da página inicial:"
+
+echo "  1) Informar uma URL manualmente"
+
+echo "  2) Usar template padrão (recomendado)"
+
+echo
+ 
+read -p "Opção [1-2] (padrão: 2): " OPCAO_TEMPLATE
+
+OPCAO_TEMPLATE=${OPCAO_TEMPLATE:-2}
+ 
+TEMPLATE_URL=""
+ 
+case "$OPCAO_TEMPLATE" in
+
+    1)
+
+        echo
+
+        read -p "Informe a URL do template HTML (ex: https://.../index.html): " TEMPLATE_URL
+
+        ;;
+
+    2|*)
+
+        TEMPLATE_URL="$DEFAULT_TEMPLATE_URL"
+
+        echo -e "Utilizando template padrão:\n$TEMPLATE_URL"
+
+        ;;
+
+esac
+ 
+if [ -z "$TEMPLATE_URL" ]; then
+
+    msg_erro "Nenhuma URL de template foi informada."
+
+    exit 1
+
+fi
+ 
+# Ajuste automático para links do GitHub com /blob/
+
+if echo "$TEMPLATE_URL" | grep -q "github.com" && echo "$TEMPLATE_URL" | grep -q "/blob/"; then
+
+    msg "Detectado link do GitHub com '/blob/'. Convertendo para RAW automaticamente..."
+
+    TEMPLATE_URL=$(echo "$TEMPLATE_URL" \
+
+        | sed -E 's#https://github.com/([^/]+)/([^/]+)/blob/(.*)#https://raw.githubusercontent.com/\1/\2/\3#')
+
+    echo -e "${AMARELO}[INFO] Nova URL convertida:${RESET} $TEMPLATE_URL"
+
+fi
+ 
+msg "Baixando template HTML de: $TEMPLATE_URL"
+
+curl -fsSL "$TEMPLATE_URL" -o "$WEB_ROOT/index.html"
+
+if [ $? -ne 0 ]; then
+
+    msg_erro "Falha ao baixar o template da Internet."
+
+    msg "Criando template HTML padrão local em $WEB_ROOT/index.html..."
+ 
+    cat > "$WEB_ROOT/index.html" <<EOF
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Servidor Web - GS Linux</title>
+<style>
+
+    body {
+
+        font-family: Arial, Helvetica, sans-serif;
+
+        background: #f5f5f5;
+
+        margin: 0;
+
+        padding: 40px;
+
+    }
+
+    .card {
+
+        max-width: 800px;
+
+        margin: 0 auto;
+
+        background: #ffffff;
+
+        border-radius: 8px;
+
+        padding: 24px;
+
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+
+    }
+
+    h1 {
+
+        color: #d92323;
+
+        margin-top: 0;
+
+    }
+
+    p {
+
+        margin: 8px 0;
+
+    }
+
+    .footer {
+
+        margin-top: 16px;
+
+        font-size: 12px;
+
+        color: #666;
+
+    }
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Servidor Web Apache - GS Linux</h1>
+<p>Página criada automaticamente pelo script de deploy.</p>
+<p>Autor: Pedro Annunciato</p>
+<div class="footer">
+<p>Diretório raiz: $WEB_ROOT</p>
+</div>
+</div>
+</body>
+</html>
+
+EOF
+ 
+    msg_ok "Template HTML padrão criado localmente."
+
+else
+
+    msg_ok "Template baixado com sucesso para $WEB_ROOT/index.html."
+
+fi
+ 
+##### ===================== ETAPA 5 - PERMISSÕES DO DIRETÓRIO WEB ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 5 - Ajuste de permissões do diretório WEB ==========${RESET}"
+ 
+msg "Ajustando proprietário e permissões do diretório $WEB_ROOT ..."
+
+chown -R www-data:www-data "$WEB_ROOT"
+
+chmod -R 755 "$WEB_ROOT"
+
+msg_ok "Permissões ajustadas (www-data:www-data / 755)."
+ 
+##### ===================== ETAPA 6 - CONFIGURAÇÕES EXTRAS (PROVA) ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 6 - Área para CONFIGURAÇÕES EXTRAS da GS ==========${RESET}"
+ 
+msg "Nesta área você deve implementar as configurações extras solicitadas pelo professor."
+ 
+# =======================================================================
+
+# EXEMPLOS (para a prova você adapta conforme o enunciado):
+
+#
+
+# 1) Criar um diretório de logs específico para o site:
+
+#    mkdir -p /var/log/gs_site
+
+#
+
+# 2) Habilitar um módulo adicional do Apache (exemplo: rewrite):
+
+#    a2enmod rewrite
+
+#
+
+# 3) Criar um VirtualHost simples:
+
+#    cat > /etc/apache2/sites-available/gs-site.conf <<VHOST
+
+#    <VirtualHost *:80>
+
+#        ServerName gs.local
+
+#        DocumentRoot /var/www/html
+
+#        ErrorLog /var/log/gs_site/error.log
+
+#        CustomLog /var/log/gs_site/access.log combined
+
+#    </VirtualHost>
+
+#    VHOST
+
+#    a2ensite gs-site.conf
+
+#
+
+# IMPORTANTE:
+
+# - Durante a GS, leia atentamente as 3 configurações extras pedidas
+
+#   e implemente os comandos AQUI NESTE BLOCO.
+
+# =======================================================================
+ 
+##### ===================== ETAPA 7 - REINÍCIO DO SERVIÇO E FINAL ===================== #####
+
+echo -e "\n${AZUL}========== ETAPA 7 - Reiniciando o Apache e finalizando ==========${RESET}"
+ 
+msg "Reiniciando o serviço apache2 para aplicar todas as alterações..."
+
+systemctl restart apache2
+ 
+systemctl is-active --quiet apache2
+
+if [ $? -ne 0 ]; then
+
+    msg_erro "O serviço apache2 não está ativo após o restart. Verifique com: systemctl status apache2"
+
+    exit 1
+
+fi
+ 
+msg_ok "Servidor WEB instalado e configurado com sucesso!"
+
+echo
+
+echo -e "${VERDE}Acesse a página pelo navegador usando o IP deste servidor.${RESET}"
+
+echo "Exemplo: http://SEU_IP/"
+
+echo
+
+echo "Para verificar rapidamente o IP, você pode usar:"
+
+echo "  ip a"
+
+echo
+
+ 
+exit 0
+
+ 
